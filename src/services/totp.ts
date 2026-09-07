@@ -29,9 +29,17 @@ export function decodeBase32(input: string): Uint8Array {
   return output;
 }
 
+// Real-world TOTP secrets are typically 16-32 Base32 characters (some up to ~64
+// for SHA-512-based secrets). Bounding this rejects garbage/pathological input
+// early rather than silently accepting a multi-megabyte pasted string.
+const MIN_SECRET_LENGTH = 8;
+const MAX_SECRET_LENGTH = 128;
+
 // Validates whether a secret string is valid Base32 format
 export function isValidBase32(secret: string): boolean {
   if (!secret || secret.trim().length === 0) return false;
+  const clean = secret.trim().replace(/\s+/g, '');
+  if (clean.length < MIN_SECRET_LENGTH || clean.length > MAX_SECRET_LENGTH) return false;
   try {
     const bytes = decodeBase32(secret);
     return bytes.length > 0;

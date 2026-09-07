@@ -8,6 +8,7 @@ import {
   getAccountCodes,
   addAccount as apiAddAccount,
   deleteAccount as apiDeleteAccount,
+  advanceHotpCounter,
   copyToClipboard,
   AccountDisplay,
   AccountInput,
@@ -133,6 +134,16 @@ export const useAuthenticatorStore = defineStore('authenticator', () => {
     }
   }
 
+  async function advanceHotp(id: string) {
+    errorMessage.value = null;
+    try {
+      await advanceHotpCounter(id);
+      await refreshCodes();
+    } catch (e: any) {
+      errorMessage.value = e?.toString() || 'Failed to generate next code.';
+    }
+  }
+
   return {
     vaultExists,
     isUnlocked,
@@ -148,5 +159,6 @@ export const useAuthenticatorStore = defineStore('authenticator', () => {
     addNewAccount,
     removeAccount,
     copyCode,
+    advanceHotp,
   };
 });

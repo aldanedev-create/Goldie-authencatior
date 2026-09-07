@@ -43,6 +43,17 @@ function handleDelete() {
   store.removeAccount(props.account.id);
   showDeleteConfirm.value = false;
 }
+
+const advancing = ref(false);
+async function handleNextCode() {
+  if (advancing.value) return;
+  advancing.value = true;
+  try {
+    await store.advanceHotp(props.account.id);
+  } finally {
+    advancing.value = false;
+  }
+}
 </script>
 
 <template>
@@ -89,7 +100,7 @@ function handleDelete() {
       </button>
     </div>
 
-    <!-- Countdown Progress Bar -->
+    <!-- Countdown Progress Bar (TOTP only) -->
     <div v-if="account.otp_type === 'totp'" class="mt-3 flex items-center space-x-2">
       <div class="flex-1 h-1.5 bg-[#0B1220] rounded-full overflow-hidden border border-slate-800/80">
         <div
@@ -104,6 +115,18 @@ function handleDelete() {
       >
         {{ account.seconds_remaining }}s
       </span>
+    </div>
+
+    <!-- Next Code Button (HOTP only) -->
+    <div v-else class="mt-3 flex items-center justify-between">
+      <span class="text-[10px] text-slate-500">Counter: {{ account.counter }}</span>
+      <button
+        @click="handleNextCode"
+        :disabled="advancing"
+        class="px-3 py-1 rounded-md text-[10px] font-medium bg-[#0B1220] border border-slate-800 text-slate-300 hover:text-[#38BDF8] hover:border-[#38BDF8]/40 transition-all disabled:opacity-50"
+      >
+        {{ advancing ? 'Generating…' : 'Generate Next Code' }}
+      </button>
     </div>
 
     <!-- Delete Confirmation Modal Overlay -->

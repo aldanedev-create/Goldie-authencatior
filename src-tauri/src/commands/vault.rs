@@ -7,7 +7,7 @@ use sha2::{Sha256, Sha512};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager, State};
 use zeroize::Zeroize;
 
@@ -15,8 +15,6 @@ pub struct VaultState {
     pub key: Mutex<Option<[u8; 32]>>,
     pub salt: Mutex<Option<[u8; kdf::SALT_LEN]>>,
     pub accounts: Mutex<Vec<Account>>,
-    pub failed_attempts: Mutex<u32>,
-    pub locked_until: Mutex<Option<Instant>>,
 }
 
 impl Default for VaultState {
@@ -25,10 +23,56 @@ impl Default for VaultState {
             key: Mutex::new(None),
             salt: Mutex::new(None),
             accounts: Mutex::new(Vec::new()),
-            failed_attempts: Mutex::new(0),
-            locked_until: Mutex::new(None),
         }
     }
+}
+
+// Failed-unlock lockout state, persisted to disk (not just in-memory) so that
+// restarting the app doesn't reset an attacker's guess budget. This only
+// protects against guessing through this app's own unlock UI/IPC — it can't
+// stop someone who has copied vault.enc and is brute-forcing it offline with
+// their own tool, since that never goes through this code path at all.
+// Argon2id's cost is what protects against that scenario.
+#[derive(serde::Serialize, serde::Deserialize, Default)]
+struct LockoutState {
+    failed_attempts: u32,
+    locked_until_epoch_ms: Option<u64>,
+}
+
+fn get_lockout_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let mut path = app
+        .path()
+        .app_data_dir()
+        .map_err(|_| "Failed to resolve app data directory")?;
+    fs::create_dir_all(&path).map_err(|_| "Failed to create app directory")?;
+    path.push("lockout.json");
+    Ok(path)
+}
+
+fn load_lockout(app: &AppHandle) -> LockoutState {
+    let path = match get_lockout_path(app) {
+        Ok(p) => p,
+        Err(_) => return LockoutState::default(),
+    };
+    fs::read_to_string(&path)
+        .ok()
+        .and_then(|content| serde_json::from_str(&content).ok())
+        .unwrap_or_default()
+}
+
+fn save_lockout(app: &AppHandle, state: &LockoutState) {
+    if let Ok(path) = get_lockout_path(app) {
+        if let Ok(json) = serde_json::to_string(state) {
+            let _ = fs::write(path, json);
+        }
+    }
+}
+
+fn now_epoch_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
 }
 
 // Helper: Normalize and decode Base32 input (handles missing padding, spaces, lowercase)
@@ -152,16 +196,14 @@ pub async fn unlock_vault(
     state: State<'_, VaultState>,
     app: AppHandle,
 ) -> Result<bool, String> {
-    // Brute-force protection: exponential backoff after repeated failures.
-    {
-        let locked_until = *state.locked_until.lock().unwrap();
-        if let Some(until) = locked_until {
-            if Instant::now() < until {
-                let wait = (until - Instant::now()).as_secs().max(1);
-                return Err(format!(
-                    "Too many failed attempts. Try again in {wait}s."
-                ));
-            }
+    // Brute-force protection: exponential backoff after repeated failures,
+    // persisted to disk so it survives an app restart.
+    let lockout = load_lockout(&app);
+    let now_ms = now_epoch_ms();
+    if let Some(until_ms) = lockout.locked_until_epoch_ms {
+        if now_ms < until_ms {
+            let wait = (until_ms - now_ms).div_ceil(1000).max(1);
+            return Err(format!("Too many failed attempts. Try again in {wait}s."));
         }
     }
 
@@ -211,11 +253,15 @@ pub async fn unlock_vault(
         Err(_) => {
             // Wrong password: record the failure and apply escalating backoff
             // (1s, 2s, 4s, ... capped at 5 minutes) to slow down brute-forcing.
-            let mut attempts = state.failed_attempts.lock().unwrap();
-            *attempts += 1;
-            let delay_secs = 1u64.saturating_shl((*attempts - 1).min(9)).min(300);
-            *state.locked_until.lock().unwrap() =
-                Some(Instant::now() + std::time::Duration::from_secs(delay_secs));
+            let attempts = lockout.failed_attempts + 1;
+            let delay_secs = (1u64 << (attempts - 1).min(9)).min(300);
+            save_lockout(
+                &app,
+                &LockoutState {
+                    failed_attempts: attempts,
+                    locked_until_epoch_ms: Some(now_ms + delay_secs * 1000),
+                },
+            );
             return Ok(false);
         }
     };
@@ -223,8 +269,7 @@ pub async fn unlock_vault(
     let accounts: Vec<Account> =
         serde_json::from_slice(&decrypted).map_err(|_| "Corrupted account payload")?;
 
-    *state.failed_attempts.lock().unwrap() = 0;
-    *state.locked_until.lock().unwrap() = None;
+    save_lockout(&app, &LockoutState::default());
     *state.key.lock().unwrap() = Some(*derived.as_bytes());
     *state.salt.lock().unwrap() = Some(salt_arr);
     *state.accounts.lock().unwrap() = accounts;
@@ -361,6 +406,40 @@ pub async fn delete_account(
 
     let mut accounts = state.accounts.lock().unwrap();
     accounts.retain(|a| a.id != id);
+
+    persist_vault(&key, &salt, &accounts, &app)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn advance_hotp_counter(
+    id: String,
+    state: State<'_, VaultState>,
+    app: AppHandle,
+) -> Result<(), String> {
+    let key_guard = state.key.lock().unwrap();
+    let key = match *key_guard {
+        Some(k) => k,
+        None => return Err("Vault is locked".to_string()),
+    };
+
+    let salt = state
+        .salt
+        .lock()
+        .unwrap()
+        .ok_or_else(|| "Vault salt missing from session".to_string())?;
+
+    let mut accounts = state.accounts.lock().unwrap();
+    let acc = accounts
+        .iter_mut()
+        .find(|a| a.id == id)
+        .ok_or_else(|| "Account not found".to_string())?;
+
+    if acc.otp_type != OtpType::Hotp {
+        return Err("Counter can only be advanced for HOTP accounts".to_string());
+    }
+
+    acc.counter = acc.counter.saturating_add(1);
 
     persist_vault(&key, &salt, &accounts, &app)?;
     Ok(())

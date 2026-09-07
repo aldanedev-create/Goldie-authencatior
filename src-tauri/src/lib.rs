@@ -17,6 +17,7 @@ pub fn run() {
             commands::vault::get_account_codes,
             commands::vault::add_account,
             commands::vault::delete_account,
+            commands::vault::advance_hotp_counter,
             commands::system::copy_to_clipboard,
         ])
         .setup(|_app| Ok(()))
