@@ -2,9 +2,10 @@ name: Build Windows MSIX
 
 on:
   push:
+    branches: [main]       # Runs automatically on push to main
     tags:
-      - 'v*'
-  workflow_dispatch: {}
+      - 'v*'               # Runs on tag pushes like v1.0.0
+  workflow_dispatch: {}    # Allows manual trigger button in Actions tab
 
 jobs:
   build:
@@ -21,19 +22,20 @@ jobs:
           cache: 'npm'
 
       - name: Setup Rust
-        uses: dtolnay/rust-action@stable
+        uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
 
       - name: Install frontend dependencies
         run: npm ci
 
-      # Safe to leave in: init is a no-op if the config already exists.
+      - name: Build Frontend
+        run: npm run build
+
       - name: Ensure MSIX config exists
         run: npx @choochmeque/tauri-windows-bundle@latest init --yes
         shell: bash
 
-      # Decode a code-signing certificate from a repo secret if provided.
       - name: Decode signing certificate
         env:
           MSIX_PFX_BASE64: ${{ secrets.MSIX_PFX_BASE64 }}
@@ -57,7 +59,6 @@ jobs:
           path: src-tauri/gen/windows/**/*.msix
           if-no-files-found: error
 
-      # Attach the MSIX to a GitHub Release when pushing a tag.
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
