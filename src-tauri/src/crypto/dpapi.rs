@@ -1,9 +1,9 @@
 #[cfg(target_os = "windows")]
-use windows_sys::Win32::Foundation::{DATA_BLOB, HLOCAL};
+use windows_sys::Win32::Foundation::{LocalFree, HLOCAL};
 #[cfg(target_os = "windows")]
-use windows_sys::Win32::Security::Cryptography::{CryptProtectData, CryptUnprotectData};
-#[cfg(target_os = "windows")]
-use windows_sys::Win32::System::Memory::LocalFree;
+use windows_sys::Win32::Security::Cryptography::{
+    CryptProtectData, CryptUnprotectData, DATA_BLOB,
+};
 #[cfg(target_os = "windows")]
 use zeroize::Zeroize;
 
