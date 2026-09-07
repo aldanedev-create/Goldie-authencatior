@@ -29,6 +29,9 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
 
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2.0"
+
       - name: Initialize MSIX Config
         shell: pwsh
         run: |
@@ -93,10 +96,11 @@ jobs:
 
           "MSIX_PFX_PATH=$pfxPath" | Out-File -FilePath $env:GITHUB_ENV -Append
 
+      - name: Verify Tauri CLI
+        run: cargo tauri --version
+
       - name: Verify MSIX Builder
-        shell: pwsh
-        run: |
-          npx tauri-windows-bundle --version
+        run: npx tauri-windows-bundle --version
 
       - name: Build MSIX
         run: npm run tauri:windows:build
