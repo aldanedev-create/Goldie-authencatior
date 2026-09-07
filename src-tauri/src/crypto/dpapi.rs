@@ -1,9 +1,9 @@
 #[cfg(target_os = "windows")]
-use windows_sys::Win32::Foundation::HLOCAL;
+use windows_sys::Win32::Foundation::{DATA_BLOB, HLOCAL};
 #[cfg(target_os = "windows")]
-use windows_sys::Win32::Security::Cryptography::{
-    CryptProtectData, CryptUnprotectData, DATA_BLOB,
-};
+use windows_sys::Win32::Security::Cryptography::{CryptProtectData, CryptUnprotectData};
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::System::Memory::LocalFree;
 #[cfg(target_os = "windows")]
 use zeroize::Zeroize;
 
@@ -57,7 +57,7 @@ pub fn protect_bytes(data: &[u8]) -> Result<Vec<u8>, DpapiError> {
     };
 
     unsafe {
-        windows_sys::Win32::System::Memory::LocalFree(out_blob.pbData as HLOCAL);
+        LocalFree(out_blob.pbData as HLOCAL);
     }
 
     Ok(protected_data)
@@ -96,7 +96,7 @@ pub fn unprotect_bytes(data: &[u8]) -> Result<Vec<u8>, DpapiError> {
     };
 
     unsafe {
-        windows_sys::Win32::System::Memory::LocalFree(out_blob.pbData as HLOCAL);
+        LocalFree(out_blob.pbData as HLOCAL);
     }
 
     let result_copy = unprotected_data.clone();
