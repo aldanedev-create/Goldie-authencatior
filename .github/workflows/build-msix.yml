@@ -18,7 +18,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
 
       - name: Setup Rust
@@ -32,8 +32,13 @@ jobs:
       - name: Build Frontend
         run: npm run build
 
-      - name: Ensure MSIX config exists
-        run: npx @choochmeque/tauri-windows-bundle@latest init --yes
+      - name: Ensure MSIX config exists & inject Store Identity
+        run: |
+          npx -y @choochmeque/tauri-windows-bundle@latest init
+          npx -y @choochmeque/tauri-windows-bundle@latest set-identity \
+            --name "HappyRecorder3D.AegisVault" \
+            --publisher "CN=50CA2AC2-0155-44AC-B2B0-47100A3FB6E2" \
+            --publisher-display-name "Happy Recorder 3D"
         shell: bash
 
       - name: Decode signing certificate
