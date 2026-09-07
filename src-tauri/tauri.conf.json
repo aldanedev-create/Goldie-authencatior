@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "authenticator",
+  "productName": "Aegis Vault Authenticator",
   "version": "1.0.0",
   "identifier": "com.security.authenticator",
   "build": {
@@ -25,7 +25,11 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["msi", "nsis"],
+    "targets": [
+      "msi",
+      "nsis"
+    ],
+    "publisher": "CN=50CA2AC2-0155-44AC-B2B0-47100A3FB6E2",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
