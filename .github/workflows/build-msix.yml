@@ -29,12 +29,6 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
 
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build Frontend
-        run: npm run build
-
       - name: Initialize MSIX Config
         shell: pwsh
         run: |
@@ -47,6 +41,12 @@ jobs:
           if (-not (Test-Path $configPath)) {
             throw "bundle.config.json was not created."
           }
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build Frontend
+        run: npm run build
 
       - name: Configure MSIX Identity
         shell: pwsh
@@ -92,6 +92,11 @@ jobs:
           [IO.File]::WriteAllBytes($pfxPath, $bytes)
 
           "MSIX_PFX_PATH=$pfxPath" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Verify MSIX Builder
+        shell: pwsh
+        run: |
+          npx tauri-windows-bundle --version
 
       - name: Build MSIX
         run: npm run tauri:windows:build
