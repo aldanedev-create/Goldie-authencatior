@@ -1,8 +1,8 @@
 #[cfg(target_os = "windows")]
-use windows_sys::Win32::Foundation::{LocalFree, HLOCAL};
+use windows_sys::Win32::Foundation::HLOCAL;
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::Security::Cryptography::{
-    CryptProtectData, CryptUnprotectData, DATA_BLOB,
+    CryptProtectData, CryptUnprotectData, CRYPT_INTEGER_BLOB,
 };
 #[cfg(target_os = "windows")]
 use zeroize::Zeroize;
@@ -27,11 +27,11 @@ impl std::error::Error for DpapiError {}
 /// Encrypts input bytes using Windows DPAPI bound to the current user context.
 #[cfg(target_os = "windows")]
 pub fn protect_bytes(data: &[u8]) -> Result<Vec<u8>, DpapiError> {
-    let mut in_blob = DATA_BLOB {
+    let mut in_blob = CRYPT_INTEGER_BLOB {
         cbData: data.len() as u32,
         pbData: data.as_ptr() as *mut u8,
     };
-    let mut out_blob = DATA_BLOB {
+    let mut out_blob = CRYPT_INTEGER_BLOB {
         cbData: 0,
         pbData: std::ptr::null_mut(),
     };
@@ -57,7 +57,7 @@ pub fn protect_bytes(data: &[u8]) -> Result<Vec<u8>, DpapiError> {
     };
 
     unsafe {
-        LocalFree(out_blob.pbData as HLOCAL);
+        windows_sys::Win32::System::Memory::LocalFree(out_blob.pbData as HLOCAL);
     }
 
     Ok(protected_data)
@@ -66,11 +66,11 @@ pub fn protect_bytes(data: &[u8]) -> Result<Vec<u8>, DpapiError> {
 /// Decrypts DPAPI protected bytes using current user credentials.
 #[cfg(target_os = "windows")]
 pub fn unprotect_bytes(data: &[u8]) -> Result<Vec<u8>, DpapiError> {
-    let mut in_blob = DATA_BLOB {
+    let mut in_blob = CRYPT_INTEGER_BLOB {
         cbData: data.len() as u32,
         pbData: data.as_ptr() as *mut u8,
     };
-    let mut out_blob = DATA_BLOB {
+    let mut out_blob = CRYPT_INTEGER_BLOB {
         cbData: 0,
         pbData: std::ptr::null_mut(),
     };
@@ -96,7 +96,7 @@ pub fn unprotect_bytes(data: &[u8]) -> Result<Vec<u8>, DpapiError> {
     };
 
     unsafe {
-        LocalFree(out_blob.pbData as HLOCAL);
+        windows_sys::Win32::System::Memory::LocalFree(out_blob.pbData as HLOCAL);
     }
 
     let result_copy = unprotected_data.clone();
