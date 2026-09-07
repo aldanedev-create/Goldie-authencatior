@@ -4,6 +4,7 @@ use windows_sys::Win32::Foundation::HLOCAL;
 use windows_sys::Win32::Security::Cryptography::{
     CryptProtectData, CryptUnprotectData, DATA_BLOB,
 };
+#[cfg(target_os = "windows")]
 use zeroize::Zeroize;
 
 #[derive(Debug)]

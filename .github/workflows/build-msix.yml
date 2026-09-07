@@ -1,0 +1,63 @@
+name: Build Windows MSIX
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-action@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      # Only needed if you did NOT commit src-tauri/gen/windows/ already.
+      # Safe to leave in: init is a no-op if the config already exists.
+      - name: Ensure MSIX config exists
+        run: npx @choochmeque/tauri-windows-bundle@latest init --yes
+        shell: bash
+
+      # Optional: decode a code-signing certificate from a repo secret.
+      # Skip this step entirely if you're not signing yet.
+      - name: Decode signing certificate
+        if: ${{ secrets.MSIX_PFX_BASE64 != '' }}
+        shell: pwsh
+        run: |
+          $bytes = [Convert]::FromBase64String("${{ secrets.MSIX_PFX_BASE64 }}")
+          [IO.File]::WriteAllBytes("$env:RUNNER_TEMP\signing.pfx", $bytes)
+          echo "MSIX_PFX_PATH=$env:RUNNER_TEMP\signing.pfx" >> $env:GITHUB_ENV
+
+      - name: Build MSIX
+        run: npm run tauri:windows:build
+        env:
+          TAURI_WINDOWS_BUNDLE_PFX_PATH: ${{ env.MSIX_PFX_PATH }}
+          TAURI_WINDOWS_BUNDLE_PFX_PASSWORD: ${{ secrets.MSIX_PFX_PASSWORD }}
+
+      - name: Upload MSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: authenticator-msix
+          path: src-tauri/gen/windows/**/*.msix
+          if-no-files-found: error
+
+      # Optional: attach the MSIX to a GitHub Release when pushing a tag.
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: src-tauri/gen/windows/**/*.msix
