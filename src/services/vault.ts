@@ -52,6 +52,10 @@ export async function deleteAccount(id: string): Promise<void> {
   await invoke('delete_account', { id });
 }
 
+export async function advanceHotpCounter(id: string): Promise<void> {
+  await invoke('advance_hotp_counter', { id });
+}
+
 export async function copyToClipboard(text: string): Promise<void> {
   await invoke('copy_to_clipboard', { text });
 }
