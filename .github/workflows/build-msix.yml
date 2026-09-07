@@ -9,6 +9,8 @@ on:
 jobs:
   build:
     runs-on: windows-latest
+    env:
+      MSIX_PFX_PATH: ''
     steps:
       - uses: actions/checkout@v4
 
@@ -26,19 +28,19 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      # Only needed if you did NOT commit src-tauri/gen/windows/ already.
       # Safe to leave in: init is a no-op if the config already exists.
       - name: Ensure MSIX config exists
         run: npx @choochmeque/tauri-windows-bundle@latest init --yes
         shell: bash
 
-      # Optional: decode a code-signing certificate from a repo secret.
-      # Skip this step entirely if you're not signing yet.
+      # Decode a code-signing certificate from a repo secret if provided.
       - name: Decode signing certificate
-        if: ${{ secrets.MSIX_PFX_BASE64 != '' }}
+        env:
+          MSIX_PFX_BASE64: ${{ secrets.MSIX_PFX_BASE64 }}
+        if: env.MSIX_PFX_BASE64 != ''
         shell: pwsh
         run: |
-          $bytes = [Convert]::FromBase64String("${{ secrets.MSIX_PFX_BASE64 }}")
+          $bytes = [Convert]::FromBase64String("$env:MSIX_PFX_BASE64")
           [IO.File]::WriteAllBytes("$env:RUNNER_TEMP\signing.pfx", $bytes)
           echo "MSIX_PFX_PATH=$env:RUNNER_TEMP\signing.pfx" >> $env:GITHUB_ENV
 
@@ -55,7 +57,7 @@ jobs:
           path: src-tauri/gen/windows/**/*.msix
           if-no-files-found: error
 
-      # Optional: attach the MSIX to a GitHub Release when pushing a tag.
+      # Attach the MSIX to a GitHub Release when pushing a tag.
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
