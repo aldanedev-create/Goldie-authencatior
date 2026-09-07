@@ -2,10 +2,10 @@ name: Build Windows MSIX
 
 on:
   push:
-    branches: [main]       # Runs automatically on push to main
+    branches: [main]
     tags:
-      - 'v*'               # Runs on tag pushes like v1.0.0
-  workflow_dispatch: {}    # Allows manual trigger button in Actions tab
+      - 'v*'
+  workflow_dispatch: {}
 
 jobs:
   build:
@@ -32,14 +32,31 @@ jobs:
       - name: Build Frontend
         run: npm run build
 
-      - name: Ensure MSIX config exists & inject Store Identity
+      - name: Initialize MSIX Config & Inject Store Identity
+        shell: pwsh
         run: |
+          # 1. Initialize configuration template
           npx -y @choochmeque/tauri-windows-bundle@latest init
-          npx -y @choochmeque/tauri-windows-bundle@latest set-identity \
-            --name "HappyRecorder3D.AegisVault" \
-            --publisher "CN=50CA2AC2-0155-44AC-B2B0-47100A3FB6E2" \
-            --publisher-display-name "Happy Recorder 3D"
-        shell: bash
+
+          # 2. Update bundle.config.json with Microsoft Partner Center identity
+          $configPath = "src-tauri/gen/windows/bundle.config.json"
+          if (Test-Path $configPath) {
+            $config = Get-Content $configPath | ConvertFrom-Json
+            $config.package.name = "HappyRecorder3D.AegisVault"
+            $config.publisher.id = "CN=50CA2AC2-0155-44AC-B2B0-47100A3FB6E2"
+            $config.publisher.displayName = "Happy Recorder 3D"
+            $config | ConvertTo-Json -Depth 10 | Set-Content $configPath
+          }
+
+          # 3. Update AppxManifest.xml.template directly
+          $manifestPath = "src-tauri/gen/windows/AppxManifest.xml.template"
+          if (Test-Path $manifestPath) {
+            [xml]$xml = Get-Content $manifestPath
+            $xml.Package.Identity.Name = "HappyRecorder3D.AegisVault"
+            $xml.Package.Identity.Publisher = "CN=50CA2AC2-0155-44AC-B2B0-47100A3FB6E2"
+            $xml.Package.Properties.PublisherDisplayName = "Happy Recorder 3D"
+            $xml.Save((Resolve-Path $manifestPath))
+          }
 
       - name: Decode signing certificate
         env:
