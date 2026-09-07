@@ -1,0 +1,11 @@
+{
+  "$schema": "https://schema.tauri.app/config/capability/2",
+  "identifier": "default",
+  "description": "Least-privilege capability set for local authenticator",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "clipboard-manager:allow-write-text",
+    "clipboard-manager:allow-clear"
+  ]
+}
