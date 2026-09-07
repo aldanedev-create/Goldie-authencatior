@@ -1,3 +1,5 @@
+import { isValidBase32 } from './totp';
+
 export interface ParsedOtpUri {
   type: 'totp' | 'hotp';
   issuer: string;
@@ -9,13 +11,26 @@ export interface ParsedOtpUri {
   counter: number;
 }
 
+const MAX_LABEL_LENGTH = 256;
+
 export function parseOtpUri(uriString: string): ParsedOtpUri {
   const trimmed = uriString.trim();
   if (!trimmed.toLowerCase().startsWith('otpauth://')) {
     throw new Error('Invalid protocol. Standard otpauth:// URI required.');
   }
 
-  const url = new URL(trimmed);
+  // A scanned QR code is untrusted input. Reject anything absurdly long
+  // before even attempting to parse it as a URL.
+  if (trimmed.length > 2000) {
+    throw new Error('QR code content is too long to be a valid otpauth:// URI.');
+  }
+
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    throw new Error('Malformed otpauth:// URI.');
+  }
   const typeStr = url.host.toLowerCase();
 
   if (typeStr !== 'totp' && typeStr !== 'hotp') {
@@ -35,13 +50,17 @@ export function parseOtpUri(uriString: string): ParsedOtpUri {
 
   const params = url.searchParams;
 
-  const secret = (params.get('secret') || '').replace(/\s+/g, '');
+  const secret = (params.get('secret') || '').replace(/\s+/g, '').toUpperCase();
   if (!secret) {
     throw new Error('URI is missing required "secret" parameter.');
   }
+  if (!isValidBase32(secret)) {
+    throw new Error('QR code secret is not valid Base32.');
+  }
 
   const paramIssuer = params.get('issuer')?.trim() || '';
-  const issuer = paramIssuer || labelIssuer || 'Unknown Issuer';
+  const issuer = (paramIssuer || labelIssuer || 'Unknown Issuer').slice(0, MAX_LABEL_LENGTH);
+  const trimmedAccountName = (accountName || 'Unknown Account').slice(0, MAX_LABEL_LENGTH);
 
   const rawAlgo = (params.get('algorithm') || 'SHA1').toUpperCase();
   let algorithm: 'SHA1' | 'SHA256' | 'SHA512' = 'SHA1';
@@ -49,18 +68,26 @@ export function parseOtpUri(uriString: string): ParsedOtpUri {
     algorithm = rawAlgo;
   }
 
-  const digits = parseInt(params.get('digits') || '6', 10);
-  const period = parseInt(params.get('period') || '30', 10);
-  const counter = parseInt(params.get('counter') || '0', 10);
+  const digitsRaw = parseInt(params.get('digits') || '6', 10);
+  const periodRaw = parseInt(params.get('period') || '30', 10);
+  const counterRaw = parseInt(params.get('counter') || '0', 10);
+
+  // A malicious or malformed QR code could otherwise smuggle an out-of-range
+  // digits/period value all the way to the Rust backend. The backend also
+  // validates this, but failing fast here gives a clearer error and avoids
+  // an unnecessary round trip.
+  const digits = isNaN(digitsRaw) || digitsRaw < 6 || digitsRaw > 8 ? 6 : digitsRaw;
+  const period = isNaN(periodRaw) || periodRaw < 10 || periodRaw > 300 ? 30 : periodRaw;
+  const counter = isNaN(counterRaw) || counterRaw < 0 ? 0 : Math.floor(counterRaw);
 
   return {
     type: typeStr as 'totp' | 'hotp',
     issuer,
-    accountName,
+    accountName: trimmedAccountName,
     secret,
     algorithm,
-    digits: isNaN(digits) ? 6 : digits,
-    period: isNaN(period) ? 30 : period,
-    counter: isNaN(counter) ? 0 : counter,
+    digits,
+    period,
+    counter,
   };
 }

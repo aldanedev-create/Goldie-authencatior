@@ -7,13 +7,16 @@ use sha2::{Sha256, Sha512};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager, State};
+use zeroize::Zeroize;
 
 pub struct VaultState {
     pub key: Mutex<Option<[u8; 32]>>,
     pub salt: Mutex<Option<[u8; kdf::SALT_LEN]>>,
     pub accounts: Mutex<Vec<Account>>,
+    pub failed_attempts: Mutex<u32>,
+    pub locked_until: Mutex<Option<Instant>>,
 }
 
 impl Default for VaultState {
@@ -22,6 +25,8 @@ impl Default for VaultState {
             key: Mutex::new(None),
             salt: Mutex::new(None),
             accounts: Mutex::new(Vec::new()),
+            failed_attempts: Mutex::new(0),
+            locked_until: Mutex::new(None),
         }
     }
 }
@@ -111,7 +116,9 @@ pub async fn initialize_vault(
     }
 
     let salt = kdf::generate_salt();
+    let mut password = password;
     let derived = kdf::derive_key(password.as_bytes(), &salt).map_err(|e| e.to_string())?;
+    password.zeroize();
 
     let empty_accounts: Vec<Account> = Vec::new();
     let plaintext = serde_json::to_vec(&empty_accounts).map_err(|_| "Serialization error")?;
@@ -145,8 +152,23 @@ pub async fn unlock_vault(
     state: State<'_, VaultState>,
     app: AppHandle,
 ) -> Result<bool, String> {
+    // Brute-force protection: exponential backoff after repeated failures.
+    {
+        let locked_until = *state.locked_until.lock().unwrap();
+        if let Some(until) = locked_until {
+            if Instant::now() < until {
+                let wait = (until - Instant::now()).as_secs().max(1);
+                return Err(format!(
+                    "Too many failed attempts. Try again in {wait}s."
+                ));
+            }
+        }
+    }
+
+    let mut password = password;
     let path = get_vault_path(&app)?;
     if !path.exists() {
+        password.zeroize();
         return Err("Vault does not exist".to_string());
     }
 
@@ -157,9 +179,10 @@ pub async fn unlock_vault(
     let raw_salt = data_encoding::BASE64
         .decode(vault.salt.as_bytes())
         .map_err(|_| "Invalid salt encoding")?;
-    
+
     let salt_bytes = dpapi::unprotect_bytes(&raw_salt).unwrap_or(raw_salt);
     if salt_bytes.len() != kdf::SALT_LEN {
+        password.zeroize();
         return Err("Corrupted salt in vault".to_string());
     }
 
@@ -167,6 +190,7 @@ pub async fn unlock_vault(
     salt_arr.copy_from_slice(&salt_bytes);
 
     let derived = kdf::derive_key(password.as_bytes(), &salt_arr).map_err(|e| e.to_string())?;
+    password.zeroize();
 
     let nonce_bytes = data_encoding::BASE64
         .decode(vault.nonce.as_bytes())
@@ -184,12 +208,23 @@ pub async fn unlock_vault(
 
     let decrypted = match cipher::decrypt(derived.as_bytes(), &ciphertext_bytes, &nonce_arr) {
         Ok(data) => data,
-        Err(_) => return Ok(false), // Incorrect password
+        Err(_) => {
+            // Wrong password: record the failure and apply escalating backoff
+            // (1s, 2s, 4s, ... capped at 5 minutes) to slow down brute-forcing.
+            let mut attempts = state.failed_attempts.lock().unwrap();
+            *attempts += 1;
+            let delay_secs = 1u64.saturating_shl((*attempts - 1).min(9)).min(300);
+            *state.locked_until.lock().unwrap() =
+                Some(Instant::now() + std::time::Duration::from_secs(delay_secs));
+            return Ok(false);
+        }
     };
 
     let accounts: Vec<Account> =
         serde_json::from_slice(&decrypted).map_err(|_| "Corrupted account payload")?;
 
+    *state.failed_attempts.lock().unwrap() = 0;
+    *state.locked_until.lock().unwrap() = None;
     *state.key.lock().unwrap() = Some(*derived.as_bytes());
     *state.salt.lock().unwrap() = Some(salt_arr);
     *state.accounts.lock().unwrap() = accounts;
@@ -199,9 +234,17 @@ pub async fn unlock_vault(
 
 #[tauri::command]
 pub async fn lock_vault(state: State<'_, VaultState>) -> Result<(), String> {
-    *state.key.lock().unwrap() = None;
+    if let Some(mut key) = state.key.lock().unwrap().take() {
+        key.zeroize();
+    }
     *state.salt.lock().unwrap() = None;
-    state.accounts.lock().unwrap().clear();
+
+    let mut accounts = state.accounts.lock().unwrap();
+    for acc in accounts.iter_mut() {
+        acc.secret.zeroize();
+    }
+    accounts.clear();
+
     Ok(())
 }
 
@@ -268,6 +311,20 @@ pub async fn add_account(
     // Validate secret is valid Base32
     decode_base32(&account.secret)?;
 
+    // Defense in depth: the frontend already restricts these, but the IPC
+    // boundary should never trust caller-supplied values blindly. An
+    // unchecked `digits` here would let 10u32.pow(digits) overflow and
+    // panic (crashing the app) inside get_account_codes.
+    if account.id.trim().is_empty() {
+        return Err("Account id must not be empty".to_string());
+    }
+    if !(6..=8).contains(&account.digits) {
+        return Err("Digits must be between 6 and 8".to_string());
+    }
+    if account.otp_type == OtpType::Totp && account.period == 0 {
+        return Err("Period must be greater than 0 for TOTP accounts".to_string());
+    }
+
     let salt = state
         .salt
         .lock()
@@ -275,6 +332,9 @@ pub async fn add_account(
         .ok_or_else(|| "Vault salt missing from session".to_string())?;
 
     let mut accounts = state.accounts.lock().unwrap();
+    if accounts.iter().any(|a| a.id == account.id) {
+        return Err("An account with this id already exists".to_string());
+    }
     accounts.push(account);
 
     persist_vault(&key, &salt, &accounts, &app)?;

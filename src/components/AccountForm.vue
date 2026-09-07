@@ -59,6 +59,7 @@ function handleSubmit() {
       <input
         v-model="issuer"
         type="text"
+        maxlength="256"
         placeholder="e.g. GitHub, Google, AWS"
         class="w-full px-3 py-2 bg-[#0B1220] border border-slate-800 rounded-lg text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-[#38BDF8]/50"
       />

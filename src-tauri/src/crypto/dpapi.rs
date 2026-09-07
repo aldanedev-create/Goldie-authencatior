@@ -57,7 +57,7 @@ pub fn protect_bytes(data: &[u8]) -> Result<Vec<u8>, DpapiError> {
     };
 
     unsafe {
-        windows_sys::Win32::System::Memory::LocalFree(out_blob.pbData as HLOCAL);
+        windows_sys::Win32::Foundation::LocalFree(out_blob.pbData as HLOCAL);
     }
 
     Ok(protected_data)
@@ -96,7 +96,7 @@ pub fn unprotect_bytes(data: &[u8]) -> Result<Vec<u8>, DpapiError> {
     };
 
     unsafe {
-        windows_sys::Win32::System::Memory::LocalFree(out_blob.pbData as HLOCAL);
+        windows_sys::Win32::Foundation::LocalFree(out_blob.pbData as HLOCAL);
     }
 
     let result_copy = unprotected_data.clone();
